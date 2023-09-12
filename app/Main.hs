@@ -1,6 +1,17 @@
+{-# LANGUAGE Arrows #-}
+
 module Main where
 
+import Control.Exception (bracket)
 import FRP.Yampa
+import System.IO
+  ( BufferMode (..)
+  , hGetBuffering
+  , hGetEcho
+  , hSetBuffering
+  , hSetEcho
+  , stdout
+  )
 
 data Direction = North | South | West | East
 data Point = Point Int Int
@@ -10,23 +21,58 @@ data SnakeState = SnakeState
   , direction :: Direction
   }
 
-signalFunction :: SF Double Double
-signalFunction = (/) <$> integral <*> time
+signalFunction :: SF Direction SnakeState
+signalFunction = undefined -- (/) <$> integral <*> time
+
+signalFunction1 :: SF (SnakeState, Direction) SnakeState
+signalFunction1 = proc (direction, snakeState) -> do
+  _t <- time -< ()
+  let newDirection = direction
+      _newState = snakeState
+  returnA -< newDirection
 
 main :: IO ()
 main =
-  reactimate initSnake nextState output signalFunction
+  let doSnake = reactimate initSnake nextState output signalFunction1
+   in bracket
+        (hGetEcho stdout)
+        (hSetEcho stdout)
+        ( \_ -> do
+            hSetEcho stdout False
+            bracket
+              (hGetBuffering stdout)
+              (hSetBuffering stdout)
+              ( \_ -> do
+                  hSetBuffering stdout NoBuffering
+                  doSnake
+              )
+        )
 
-initSnake :: IO SnakeState
-initSnake =
-  return $
-    SnakeState
-      { snake = [Point 0 0]
-      , direction = North
-      }
+initSnake :: IO Direction
+initSnake = do
+  print "Initialized !"
+  let _isnake =
+        SnakeState
+          { snake = [Point 0 0]
+          , direction = North
+          }
+   in return West
 
-nextState :: Bool -> IO (DTime, Maybe SnakeState)
-nextState _ = return (1.0, Nothing)
+nextState :: Bool -> IO (DTime, Maybe Direction)
+nextState _ = do
+  c <- getChar
+  let direction =
+        ( case c of
+            'a' -> Just West
+            'w' -> Just North
+            's' -> Just South
+            'd' -> Just East
+            _ -> Nothing
+        )
+   in -- s <- initSnake
+      return (1.0, direction)
 
 output :: Bool -> SnakeState -> IO Bool
-output _ _ = return False
+output _ _ = do
+  print "Hello!"
+  return False
