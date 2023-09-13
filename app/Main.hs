@@ -1,8 +1,14 @@
-{-# LANGUAGE Arrows #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Redundant lambda" #-}
 
 module Main where
 
 import Control.Exception (bracket)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.Time (UTCTime, nominalDiffTimeToSeconds)
+import Data.Time.Clock (getCurrentTime)
+import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime, utcTimeToPOSIXSeconds)
 import FRP.Yampa
 import System.IO
   ( BufferMode (..)
@@ -10,10 +16,14 @@ import System.IO
   , hGetEcho
   , hSetBuffering
   , hSetEcho
+  , hWaitForInput
+  , stdin
   , stdout
   )
 
-data Direction = North | South | West | East
+data Direction = North | South | West | East | Unchanged
+  deriving (Show, Eq)
+
 data Point = Point Int Int
 
 data SnakeState = SnakeState
@@ -21,32 +31,44 @@ data SnakeState = SnakeState
   , direction :: Direction
   }
 
-signalFunction :: SF Direction SnakeState
-signalFunction = undefined -- (/) <$> integral <*> time
-
-signalFunction1 :: SF (SnakeState, Direction) SnakeState
-signalFunction1 = proc (direction, snakeState) -> do
-  _t <- time -< ()
-  let newDirection = direction
-      _newState = snakeState
-  returnA -< newDirection
+turnSnake :: SnakeState -> Direction -> SnakeState
+turnSnake oldSnake newDirection =
+  let oldDirection = direction oldSnake
+      newSnake =
+        if (oldDirection == North && newDirection == South)
+          || (oldDirection == South && newDirection == North)
+          || (oldDirection == East && newDirection == West)
+          || (oldDirection == West && newDirection == East)
+          then oldSnake
+          else oldSnake {direction = newDirection}
+   in newSnake
 
 main :: IO ()
-main =
-  let doSnake = reactimate initSnake nextState output signalFunction1
-   in bracket
-        (hGetEcho stdout)
-        (hSetEcho stdout)
-        ( \_ -> do
-            hSetEcho stdout False
-            bracket
-              (hGetBuffering stdout)
-              (hSetBuffering stdout)
-              ( \_ -> do
-                  hSetBuffering stdout NoBuffering
-                  doSnake
-              )
-        )
+main = do
+  timeRef <- newIORef (0 :: Int)
+  let
+    iSnake =
+      SnakeState
+        { snake = [Point 0 0]
+        , direction = North
+        }
+    doSnake = reactimate initSnake (nextState timeRef) output (sscan turnSnake iSnake)
+   in
+    bracket
+      (hGetEcho stdin)
+      (hSetEcho stdin)
+      ( \_ -> do
+          hSetEcho stdin False
+          bracket
+            (hGetBuffering stdin)
+            (hSetBuffering stdin)
+            ( \_ -> do
+                hSetBuffering stdin NoBuffering
+                hSetBuffering stdout NoBuffering
+                hSetEcho stdout False
+                doSnake
+            )
+      )
 
 initSnake :: IO Direction
 initSnake = do
@@ -58,21 +80,42 @@ initSnake = do
           }
    in return West
 
-nextState :: Bool -> IO (DTime, Maybe Direction)
-nextState _ = do
-  c <- getChar
-  let direction =
-        ( case c of
-            'a' -> Just West
-            'w' -> Just North
-            's' -> Just South
-            'd' -> Just East
-            _ -> Nothing
-        )
-   in -- s <- initSnake
-      return (1.0, direction)
+secondsSinceEpoch :: UTCTime -> Int
+secondsSinceEpoch =
+  floor . ((1e3 *) . nominalDiffTimeToSeconds . utcTimeToPOSIXSeconds)
+
+yampaSDLTimeSense :: IORef Int -> IO DTime
+yampaSDLTimeSense tr = do
+  ct <- getCurrentTime
+  t0 <- readIORef tr
+  let
+    seconds = secondsSinceEpoch ct
+    n = seconds - t0
+   in
+    do
+      writeIORef tr n
+      return $ fromIntegral n
+
+nextState :: IORef Int -> Bool -> IO (DTime, Maybe Direction)
+nextState tr _ = do
+  dtSecs <- yampaSDLTimeSense tr
+  s <- hWaitForInput stdin 1000
+  if s
+    then do
+      c <- getChar
+      -- putStr $ show dtSecs
+      let direction =
+            ( case c of
+                'a' -> Just West
+                'w' -> Just North
+                's' -> Just South
+                'd' -> Just East
+                _ -> Just Unchanged
+            )
+       in return (dtSecs, direction)
+    else return (dtSecs, Nothing)
 
 output :: Bool -> SnakeState -> IO Bool
-output _ _ = do
-  print "Hello!"
+output _ s = do
+  print $ direction s
   return False
