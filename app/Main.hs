@@ -1,14 +1,12 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
-{-# HLINT ignore "Redundant lambda" #-}
-
 module Main where
 
 import Control.Exception (bracket)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Time (UTCTime, nominalDiffTimeToSeconds)
 import Data.Time.Clock (getCurrentTime)
-import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime, utcTimeToPOSIXSeconds)
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import FRP.Yampa
 import System.IO
   ( BufferMode (..)
@@ -50,7 +48,7 @@ main = do
     iSnake =
       SnakeState
         { snake = [Point 0 0]
-        , direction = North
+        , direction = West
         }
     doSnake = reactimate initSnake (nextState timeRef) output (sscan turnSnake iSnake)
    in
@@ -73,12 +71,7 @@ main = do
 initSnake :: IO Direction
 initSnake = do
   print "Initialized !"
-  let _isnake =
-        SnakeState
-          { snake = [Point 0 0]
-          , direction = North
-          }
-   in return West
+  return West
 
 secondsSinceEpoch :: UTCTime -> Int
 secondsSinceEpoch =
