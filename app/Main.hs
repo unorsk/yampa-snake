@@ -60,7 +60,16 @@ turnSnake oldSnake newDirection =
 initialSnake :: SnakeState
 initialSnake =
   SnakeState
-    { snake = [Point 1 6, Point 1 5, Point 1 4, Point 1 3, Point 1 2, Point 1 1]
+    { snake =
+        [ Point 1 8
+        , Point 1 7
+        , Point 1 6
+        , Point 1 5
+        , Point 1 4
+        , Point 1 3
+        , Point 1 2
+        , Point 1 1
+        ]
     , direction = East
     }
 
@@ -94,7 +103,7 @@ main = do
 initSnake :: IO Direction
 initSnake = do
   putStr "\ESC[2J"
-  traverse_ (printPoint '&') $ snake initialSnake
+  traverse_ (printPoint '@') $ snake initialSnake
   return East
 
 nextState :: IORef Int -> Bool -> IO (DTime, Maybe Direction)
@@ -116,11 +125,17 @@ nextState tr _ = do
     else return (dtSecs, Nothing)
 
 outputSnake :: Bool -> SnakeState -> IO Bool
-outputSnake _ s = do
-  printPoint '&' $ head (snake s)
-  printPoint ' ' $ last (snake s)
-  putStr "\ESC[0;0H"
-  return False
+outputSnake _ (SnakeState s d) =
+  let c = '@'
+   in -- let c = case d of
+      --       North -> '|'
+      --       South -> '|'
+      --       _ -> '-'
+      do
+        printPoint c $ head s
+        printPoint ' ' $ last s
+        putStr "\ESC[0;0H"
+        return False
 
 secondsTick :: IORef Int -> IO DTime
 secondsTick tr = do
