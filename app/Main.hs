@@ -1,8 +1,7 @@
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-
 module Main where
 
 import Control.Exception (bracket)
+import Data.Foldable (traverse_)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Time (UTCTime, nominalDiffTimeToSeconds)
 import Data.Time.Clock (getCurrentTime)
@@ -29,28 +28,52 @@ data SnakeState = SnakeState
   , direction :: Direction
   }
 
+newHead :: Point -> Direction -> Point
+newHead (Point line col) North = Point (line - 1) col
+newHead (Point line col) South = Point (line + 1) col
+newHead (Point line col) West = Point line (col - 1)
+newHead (Point line col) East = Point line (col + 1)
+newHead p Unchanged = p
+
 turnSnake :: SnakeState -> Direction -> SnakeState
 turnSnake oldSnake newDirection =
-  let oldDirection = direction oldSnake
+  let oldOldDirection = direction oldSnake
+      oldDirection =
+        if newDirection == Unchanged || not (canTurn newDirection oldOldDirection)
+          then oldOldDirection
+          else newDirection
+      newSnakeHead = newHead (head $ snake oldSnake) oldDirection
       newSnake =
-        if (oldDirection == North && newDirection == South)
-          || (oldDirection == South && newDirection == North)
-          || (oldDirection == East && newDirection == West)
-          || (oldDirection == West && newDirection == East)
-          then oldSnake
-          else oldSnake {direction = newDirection}
+        oldSnake
+          { direction = oldDirection
+          , snake = newSnakeHead : init (snake oldSnake)
+          }
    in newSnake
+ where
+  canTurn :: Direction -> Direction -> Bool
+  canTurn North South = False
+  canTurn South North = False
+  canTurn West East = False
+  canTurn East West = False
+  canTurn _ _ = True
+
+initialSnake :: SnakeState
+initialSnake =
+  SnakeState
+    { snake = [Point 1 6, Point 1 5, Point 1 4, Point 1 3, Point 1 2, Point 1 1]
+    , direction = East
+    }
 
 main :: IO ()
 main = do
   timeRef <- newIORef (0 :: Int)
   let
-    iSnake =
-      SnakeState
-        { snake = [Point 0 0]
-        , direction = West
-        }
-    doSnake = reactimate initSnake (nextState timeRef) output (sscan turnSnake iSnake)
+    doSnake =
+      reactimate
+        initSnake
+        (nextState timeRef)
+        outputSnake
+        (sscan turnSnake initialSnake)
    in
     bracket
       (hGetEcho stdin)
@@ -70,33 +93,17 @@ main = do
 
 initSnake :: IO Direction
 initSnake = do
-  print "Initialized !"
-  return West
-
-secondsSinceEpoch :: UTCTime -> Int
-secondsSinceEpoch =
-  floor . ((1e3 *) . nominalDiffTimeToSeconds . utcTimeToPOSIXSeconds)
-
-yampaSDLTimeSense :: IORef Int -> IO DTime
-yampaSDLTimeSense tr = do
-  ct <- getCurrentTime
-  t0 <- readIORef tr
-  let
-    seconds = secondsSinceEpoch ct
-    n = seconds - t0
-   in
-    do
-      writeIORef tr n
-      return $ fromIntegral n
+  putStr "\ESC[2J"
+  traverse_ (printPoint '&') $ snake initialSnake
+  return East
 
 nextState :: IORef Int -> Bool -> IO (DTime, Maybe Direction)
 nextState tr _ = do
-  dtSecs <- yampaSDLTimeSense tr
+  dtSecs <- secondsTick tr
   s <- hWaitForInput stdin 1000
   if s
     then do
       c <- getChar
-      -- putStr $ show dtSecs
       let direction =
             ( case c of
                 'a' -> Just West
@@ -108,7 +115,33 @@ nextState tr _ = do
        in return (dtSecs, direction)
     else return (dtSecs, Nothing)
 
-output :: Bool -> SnakeState -> IO Bool
-output _ s = do
-  print $ direction s
+outputSnake :: Bool -> SnakeState -> IO Bool
+outputSnake _ s = do
+  printPoint '&' $ head (snake s)
+  printPoint ' ' $ last (snake s)
+  putStr "\ESC[0;0H"
   return False
+
+secondsTick :: IORef Int -> IO DTime
+secondsTick tr = do
+  ct <- getCurrentTime
+  t0 <- readIORef tr
+  let
+    seconds = secondsSinceEpoch ct
+    n = seconds - t0
+   in
+    do
+      writeIORef tr n
+      return $ fromIntegral n
+ where
+  secondsSinceEpoch :: UTCTime -> Int
+  secondsSinceEpoch =
+    floor . ((1e3 *) . nominalDiffTimeToSeconds . utcTimeToPOSIXSeconds)
+
+goto :: Int -> Int -> IO ()
+goto line col = putStr $ "\ESC[" ++ show line ++ ";" ++ show col ++ "H"
+
+printPoint :: Char -> Point -> IO ()
+printPoint c (Point x y) = do
+  goto x y
+  putChar c
