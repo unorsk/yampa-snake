@@ -1,9 +1,11 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Main where
 
 import Control.Exception (bracket)
 import Data.Foldable (traverse_)
+import Data.Functor ((<&>))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.Time (UTCTime, nominalDiffTimeToSeconds)
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import FRP.Yampa
@@ -36,16 +38,13 @@ newHead (Point line col) East = Point line (col + 1)
 newHead p Unchanged = p
 
 turnSnake :: SnakeState -> Direction -> SnakeState
-turnSnake oldSnake newDirection =
-  let oldOldDirection = direction oldSnake
-      oldDirection =
-        if newDirection == Unchanged || not (canTurn newDirection oldOldDirection)
-          then oldOldDirection
-          else newDirection
-      newSnakeHead = newHead (head $ snake oldSnake) oldDirection
+turnSnake oldSnake newDir =
+  let oldDir = direction oldSnake
+      updatedDir = if newDir == Unchanged || not (canTurn newDir oldDir) then oldDir else newDir
+      newSnakeHead = newHead (head $ snake oldSnake) updatedDir
       newSnake =
         oldSnake
-          { direction = oldDirection
+          { direction = updatedDir
           , snake = newSnakeHead : init (snake oldSnake)
           }
    in newSnake
@@ -75,25 +74,23 @@ initialSnake =
 
 main :: IO ()
 main = do
-  timeRef <- newIORef (0 :: Int)
-  let
-    doSnake =
-      reactimate
-        initSnake
-        (nextState timeRef)
-        outputSnake
-        (sscan turnSnake initialSnake)
-   in
-    bracket
-      getEchoAndBuffer
-      restoreEchoAndBuffer
-      ( \_ -> do
-          hSetEcho stdin False
-          hSetBuffering stdin NoBuffering
-          hSetBuffering stdout NoBuffering
-          doSnake
-      )
+  tRef <- newIORef (0 :: Int)
+  bracket
+    getEchoAndBuffer
+    restoreEchoAndBuffer
+    ( \_ -> do
+        hSetEcho stdin False
+        hSetBuffering stdin NoBuffering
+        hSetBuffering stdout NoBuffering
+        doSnake tRef
+    )
  where
+  doSnake tRef =
+    reactimate
+      initSnake
+      (nextState tRef)
+      printSnake
+      (sscan turnSnake initialSnake)
   getEchoAndBuffer :: IO (Bool, BufferMode)
   getEchoAndBuffer = do
     e <- hGetEcho stdin
@@ -113,45 +110,37 @@ initSnake = do
 nextState :: IORef Int -> Bool -> IO (DTime, Maybe Direction)
 nextState tr _ = do
   dtSecs <- secondsTick tr
-  s <- hWaitForInput stdin 1000
-  if s
-    then do
-      c <- getChar
-      let direction =
-            ( case c of
-                'a' -> Just West
-                'w' -> Just North
-                's' -> Just South
-                'd' -> Just East
-                _ -> Just Unchanged
-            )
-       in return (dtSecs, direction)
-    else return (dtSecs, Nothing)
+  hWaitForInput stdin 1000 >>= doMakeState dtSecs
+ where
+  doMakeState :: DTime -> Bool -> IO (DTime, Maybe Direction)
+  doMakeState dtSecs False = return (dtSecs, Nothing)
+  doMakeState dtSecs True = do
+    direction <- getChar <&> charToDirection
+    -- direction <- getChar >>= return . charToDirection
+    return (dtSecs, Just direction)
+  charToDirection :: Char -> Direction
+  charToDirection = \case
+    'a' -> West
+    'w' -> North
+    's' -> South
+    'd' -> East
+    _ -> Unchanged
 
-outputSnake :: Bool -> SnakeState -> IO Bool
-outputSnake _ (SnakeState s _d) =
-  let c = '@'
-   in do
-        printPoint c $ head s
-        printPoint ' ' $ last s
-        putStr "\ESC[0;0H" -- go to top left corner
-        return False
+printSnake :: Bool -> SnakeState -> IO Bool
+printSnake _ (SnakeState s _d) = do
+  printPoint '@' $ head s
+  printPoint ' ' $ last s
+  putStr "\ESC[0;0H" -- go to top left corner
+  return False
 
 secondsTick :: IORef Int -> IO DTime
 secondsTick tr = do
   ct <- getCurrentTime
   t0 <- readIORef tr
-  let
-    seconds = secondsSinceEpoch ct
-    n = seconds - t0
-   in
-    do
-      writeIORef tr n
-      return $ fromIntegral n
- where
-  secondsSinceEpoch :: UTCTime -> Int
-  secondsSinceEpoch =
-    floor . ((1e3 *) . nominalDiffTimeToSeconds . utcTimeToPOSIXSeconds)
+  let n = (t0 - floor (utcTimeToPOSIXSeconds ct))
+   in do
+        writeIORef tr n
+        return $ fromIntegral n
 
 goto :: Int -> Int -> IO ()
 goto line col = putStr $ "\ESC[" ++ show line ++ ";" ++ show col ++ "H"
