@@ -85,24 +85,28 @@ main = do
         (sscan turnSnake initialSnake)
    in
     bracket
-      (hGetEcho stdin)
-      (hSetEcho stdin)
+      getEchoAndBuffer
+      restoreEchoAndBuffer
       ( \_ -> do
           hSetEcho stdin False
-          bracket
-            (hGetBuffering stdin)
-            (hSetBuffering stdin)
-            ( \_ -> do
-                hSetBuffering stdin NoBuffering
-                hSetBuffering stdout NoBuffering
-                hSetEcho stdout False
-                doSnake
-            )
+          hSetBuffering stdin NoBuffering
+          hSetBuffering stdout NoBuffering
+          doSnake
       )
+ where
+  getEchoAndBuffer :: IO (Bool, BufferMode)
+  getEchoAndBuffer = do
+    e <- hGetEcho stdin
+    b <- hGetBuffering stdin
+    return (e, b)
+  restoreEchoAndBuffer :: (Bool, BufferMode) -> IO ()
+  restoreEchoAndBuffer (e, b) = do
+    hSetEcho stdin e
+    hSetBuffering stdin b
 
 initSnake :: IO Direction
 initSnake = do
-  putStr "\ESC[2J"
+  putStr "\ESC[2J" -- clear screen
   traverse_ (printPoint '@') $ snake initialSnake
   return East
 
@@ -125,16 +129,12 @@ nextState tr _ = do
     else return (dtSecs, Nothing)
 
 outputSnake :: Bool -> SnakeState -> IO Bool
-outputSnake _ (SnakeState s d) =
+outputSnake _ (SnakeState s _d) =
   let c = '@'
-   in -- let c = case d of
-      --       North -> '|'
-      --       South -> '|'
-      --       _ -> '-'
-      do
+   in do
         printPoint c $ head s
         printPoint ' ' $ last s
-        putStr "\ESC[0;0H"
+        putStr "\ESC[0;0H" -- go to top left corner
         return False
 
 secondsTick :: IORef Int -> IO DTime
